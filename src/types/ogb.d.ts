@@ -1,6 +1,25 @@
 // The narrow bridge the Electron preload exposes. Absent in the browser.
 export {};
 
+type AppUpdatePhase =
+  | "idle"
+  | "checking"
+  | "available"
+  | "downloading"
+  | "downloaded"
+  | "installing"
+  | "up-to-date"
+  | "error"
+  | "unavailable";
+
+interface AppUpdateState {
+  phase: AppUpdatePhase;
+  currentVersion: string;
+  availableVersion: string | null;
+  percent: number | null;
+  message: string;
+}
+
 declare global {
   interface Window {
     ogb?: {
@@ -19,6 +38,10 @@ declare global {
       permOpenSettings(pane: "mic" | "screen" | "speech"): Promise<void>;
       /** Registers a screen-capture attempt (adds the app to the TCC pane). */
       permRequestScreen(): Promise<string>;
+      updateState(): Promise<AppUpdateState>;
+      checkForUpdates(): Promise<AppUpdateState>;
+      installUpdate(): Promise<AppUpdateState>;
+      onUpdateState(cb: (state: AppUpdateState) => void): () => void;
     };
   }
 }

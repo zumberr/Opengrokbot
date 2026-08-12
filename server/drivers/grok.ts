@@ -19,8 +19,10 @@ const DRIVER_KIND = "grok";
 const DEFAULT_URL = "https://api.x.ai/v1";
 
 const MODELS = {
-  default: "grok-4",
+  default: "grok-4.6",
   options: [
+    { id: "grok-4.6", label: "Grok 4.6" },
+    { id: "grok-build-0.1", label: "Grok Build 0.1" },
     { id: "grok-4", label: "Grok 4" },
     { id: "grok-4-fast", label: "Grok 4 Fast" },
     { id: "grok-3-mini", label: "Grok 3 Mini" },

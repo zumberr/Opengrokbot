@@ -36,12 +36,31 @@ export interface Message {
   /** screen messages: a frame of the bot's computer (base64) */
   png?: string;
   mime?: string;
+  senderBotId?: string;
+  senderName?: string;
+  senderColor?: MausColor;
+  collaborationId?: string;
   at: number;
 }
 
 export interface ModelSelection {
   instanceId: string;
   model: string;
+}
+
+export type SmartRole = "developer" | "supervisor" | "leader" | "creative" | "balanced";
+
+export interface SmartProfile {
+  id: SmartRole;
+  label: string;
+  description: string;
+  candidates: Array<{
+    instanceId: string;
+    model: string;
+    reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max";
+    label: string;
+    available: boolean;
+  }>;
 }
 
 export interface Bot {
@@ -56,6 +75,9 @@ export interface Bot {
   unread: boolean;
   busy?: boolean;
   modelSelection: ModelSelection;
+  routingMode?: "smart" | "manual";
+  smartRole?: SmartRole;
+  lastRoute?: ModelSelection & { reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max" };
   /** Where this bot's computer runs; unset = auto (cloud box if one exists, else local). */
   computer?: "cloud" | "local" | "off";
   pinned?: boolean;
@@ -87,7 +109,9 @@ export interface InstanceInfo {
 
 interface AppState {
   bots: Bot[];
+  maxBots: number;
   instances: InstanceInfo[];
+  smartProfiles: SmartProfile[];
   config: ConfigStatus | null;
   selectedId: string;
   settingsOpen: boolean;
@@ -102,14 +126,17 @@ interface AppState {
   provisioning: Record<string, boolean>;
   connected: boolean;
   error: string | null;
+  collaborations: Record<string, { pending: number; total: number }>;
 }
 
 type Action =
-  | { type: "hydrate"; bots: Bot[] }
+  | { type: "hydrate"; bots: Bot[]; maxBots?: number }
   | { type: "instances"; instances: InstanceInfo[] }
+  | { type: "smartProfiles"; profiles: SmartProfile[] }
   | { type: "configStatus"; config: ConfigStatus }
   | { type: "select"; id: string }
-  | { type: "send"; botId: string; text: string }
+  | { type: "send"; botId: string; text: string; collaboratorIds?: string[] }
+  | { type: "collaborationStatus"; coordinatorId: string; pending: number; total: number }
   | { type: "answerCard"; botId: string; messageId: string; answer: string }
   | { type: "dismissCard"; botId: string; messageId: string }
   | { type: "newBot" }
@@ -125,6 +152,7 @@ type Action =
   | { type: "screenFrame"; botId: string; png: string; mime: string }
   | { type: "provisioning"; botId: string; on: boolean }
   | { type: "setModel"; botId: string; selection: ModelSelection }
+  | { type: "setSmartRole"; botId: string; role: SmartRole }
   | { type: "interrupt"; botId: string }
   | { type: "connected"; value: boolean }
   | { type: "error"; message: string | null }
@@ -138,7 +166,7 @@ type Action =
       patch: Partial<
         Pick<
           Bot,
-          "name" | "title" | "description" | "notifications" | "computer" | "color" | "mascotExpression" | "pinned" | "hidden"
+          "name" | "title" | "description" | "notifications" | "computer" | "color" | "mascotExpression" | "pinned" | "hidden" | "routingMode" | "smartRole"
         >
       >;
     };
@@ -163,10 +191,12 @@ function reducer(state: AppState, action: Action): AppState {
         action.bots.some((b) => b.id === state.selectedId) && state.selectedId
           ? state.selectedId
           : (action.bots[0]?.id ?? "");
-      return { ...state, bots: action.bots, selectedId };
+      return { ...state, bots: action.bots, selectedId, maxBots: action.maxBots ?? state.maxBots };
     }
     case "instances":
       return { ...state, instances: action.instances };
+    case "smartProfiles":
+      return { ...state, smartProfiles: action.profiles };
     case "configStatus":
       return { ...state, config: action.config };
     case "select":
@@ -232,11 +262,19 @@ function reducer(state: AppState, action: Action): AppState {
     case "provisioning":
       return { ...state, provisioning: { ...state.provisioning, [action.botId]: action.on } };
     case "setModel":
-      return updateBot(state, action.botId, (b) => ({ ...b, modelSelection: action.selection }));
+      return updateBot(state, action.botId, (b) => ({ ...b, modelSelection: action.selection, routingMode: "manual" }));
+    case "setSmartRole":
+      return updateBot(state, action.botId, (b) => ({ ...b, smartRole: action.role, routingMode: "smart" }));
     case "connected":
       return { ...state, connected: action.value };
     case "error":
       return { ...state, error: action.message };
+    case "collaborationStatus": {
+      const collaborations = { ...state.collaborations };
+      if (action.pending > 0) collaborations[action.coordinatorId] = { pending: action.pending, total: action.total };
+      else delete collaborations[action.coordinatorId];
+      return { ...state, collaborations };
+    }
     // bot settings, the computer panel, and app settings share the right slot
     case "toggleSettings": {
       const open = action.open ?? !state.settingsOpen;
@@ -281,7 +319,9 @@ function reducer(state: AppState, action: Action): AppState {
 
 const initialState: AppState = {
   bots: [],
+  maxBots: 100,
   instances: [],
+  smartProfiles: [],
   config: null,
   selectedId: "",
   settingsOpen: false,
@@ -293,6 +333,7 @@ const initialState: AppState = {
   provisioning: {},
   connected: false,
   error: null,
+  collaborations: {},
 };
 
 // ── API client ─────────────────────────────────────────────────────────
@@ -337,10 +378,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       rawDispatch(action);
       switch (action.type) {
         case "send":
-          api(`/api/bots/${action.botId}/messages`, {
+          api(
+            action.collaboratorIds?.length
+              ? `/api/bots/${action.botId}/collaborate`
+              : `/api/bots/${action.botId}/messages`,
+            {
             method: "POST",
-            body: JSON.stringify({ text: action.text }),
-          }).catch(showError);
+            body: JSON.stringify({ text: action.text, botIds: action.collaboratorIds }),
+            },
+          ).catch(showError);
           break;
         case "answerCard": {
           const bot = stateRef.current.bots.find((b) => b.id === action.botId);
@@ -396,6 +442,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                   description: source.description,
                   notifications: source.notifications,
                   modelSelection: source.modelSelection,
+                  routingMode: source.routingMode ?? "smart",
+                  smartRole: source.smartRole ?? "balanced",
                   ...(source.computer ? { computer: source.computer } : {}),
                 }),
               }).then(({ bot: patched }) =>
@@ -423,7 +471,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "setModel":
           api(`/api/bots/${action.botId}`, {
             method: "PATCH",
-            body: JSON.stringify({ modelSelection: action.selection }),
+            body: JSON.stringify({ modelSelection: action.selection, routingMode: "manual" }),
+          }).catch(showError);
+          break;
+        case "setSmartRole":
+          api(`/api/bots/${action.botId}`, {
+            method: "PATCH",
+            body: JSON.stringify({ smartRole: action.role, routingMode: "smart" }),
           }).catch(showError);
           break;
         case "interrupt":
@@ -455,10 +509,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     let alive = true;
     const loadAll = () => {
       api("/api/bots")
-        .then(({ bots }) => alive && rawDispatch({ type: "hydrate", bots }))
+        .then(({ bots, maxBots }) => alive && rawDispatch({ type: "hydrate", bots, maxBots }))
         .catch(() => {});
       api("/api/instances")
         .then(({ instances }) => alive && rawDispatch({ type: "instances", instances }))
+        .catch(() => {});
+      api("/api/smart-routing")
+        .then(({ profiles }) => alive && rawDispatch({ type: "smartProfiles", profiles }))
         .catch(() => {});
       api("/api/config")
         .then((config) => alive && rawDispatch({ type: "configStatus", config }))
@@ -515,6 +572,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "computer":
           rawDispatch({ type: "provisioning", botId: frame.botId, on: frame.state === "provisioning" });
           break;
+        case "collaboration":
+          rawDispatch({
+            type: "collaborationStatus",
+            coordinatorId: frame.coordinatorId,
+            pending: frame.pending,
+            total: frame.total,
+          });
+          break;
         case "bot.deleted":
           rawDispatch({ type: "deleteBot", botId: frame.botId });
           break;
@@ -527,6 +592,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           });
           api("/api/instances")
             .then(({ instances }) => rawDispatch({ type: "instances", instances }))
+            .catch(() => {});
+          api("/api/smart-routing")
+            .then(({ profiles }) => rawDispatch({ type: "smartProfiles", profiles }))
             .catch(() => {});
           break;
       }

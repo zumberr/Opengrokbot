@@ -11,8 +11,12 @@ files:
   - "!electron/resources/speech-helper"
   - "!electron/resources/perm-helper"
   - "!electron/resources/speech-helper.ps1"
-  - "!**/node_modules/**"
   - package.json
+
+publish:
+  provider: github
+  owner: zumberr
+  repo: Opengrokbot
 
 asar: true
 

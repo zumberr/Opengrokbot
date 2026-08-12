@@ -25,4 +25,12 @@ contextBridge.exposeInMainWorld("ogb", {
   permOpenSettings: (pane) => ipcRenderer.invoke("perm:open-settings", pane),
   /** Registers a screen-capture attempt (adds the app to the TCC pane). */
   permRequestScreen: () => ipcRenderer.invoke("perm:request-screen"),
+  updateState: () => ipcRenderer.invoke("update:get-state"),
+  checkForUpdates: () => ipcRenderer.invoke("update:check"),
+  installUpdate: () => ipcRenderer.invoke("update:install"),
+  onUpdateState: (cb) => {
+    const handler = (_event, state) => cb(state);
+    ipcRenderer.on("update:state", handler);
+    return () => ipcRenderer.removeListener("update:state", handler);
+  },
 });

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Check, Loader2, Monitor, Square, X } from "lucide-react";
+import { Check, Loader2, Monitor, Network, Square, X } from "lucide-react";
 import { useStore, formatTime, type Bot, type Message } from "@/state/store";
 import { MausAvatar } from "./Avatar";
 import { expressionForBot } from "@/lib/mascot";
@@ -73,15 +73,34 @@ function Markdownish({ text }: { text: string }) {
 
 function Bubble({ message }: { message: Message }) {
   const user = message.role === "user";
+  const relayed = Boolean(message.senderBotId || message.senderName);
   return (
-    <div className={cn("flex w-full", user ? "justify-end" : "justify-start")}>
-      <div
-        className={cn(
-          "max-w-[70%] rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed",
-          user ? "whitespace-pre-wrap bg-bubble-user text-ink" : "bg-card text-ink",
+    <div className={cn("flex w-full", user && !relayed ? "justify-end" : "justify-start")}>
+      <div className={cn("max-w-[76%]", relayed && "flex items-start gap-2.5")}>
+        {relayed && message.senderColor && (
+          <div className="mt-5 shrink-0">
+            <MausAvatar color={message.senderColor} expression="focused" size={30} />
+          </div>
         )}
-      >
-        {user ? message.text : <Markdownish text={message.text ?? ""} />}
+        <div>
+          {relayed && (
+            <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-accent">
+              <Network size={11} /> {message.senderName ?? "Collaborator"} · team draft
+            </div>
+          )}
+          <div
+            className={cn(
+              "rounded-2xl px-4 py-3 text-[14px] leading-relaxed shadow-sm",
+              relayed
+                ? "border border-accent/20 bg-accent/6 text-ink"
+                : user
+                  ? "whitespace-pre-wrap rounded-br-md bg-bubble-user text-ink"
+                  : "rounded-bl-md border border-hairline/60 bg-card/90 text-ink",
+            )}
+          >
+            {user && !relayed ? message.text : <Markdownish text={message.text ?? ""} />}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -128,7 +147,7 @@ function ScreenFrame({ png, mime }: { png: string; mime?: string }) {
 function StreamingBubble({ text }: { text: string }) {
   return (
     <div className="flex w-full justify-start">
-      <div className="max-w-[70%] rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
+      <div className="max-w-[76%] rounded-2xl rounded-bl-md border border-hairline/60 bg-card/90 px-4 py-3 text-[14px] leading-relaxed text-ink">
         <Markdownish text={text} />
         <span className="ml-0.5 inline-block h-[14px] w-[2px] animate-pulse bg-ink-secondary align-middle" />
       </div>
@@ -150,16 +169,21 @@ export function ChatView({ bot }: { bot: Bot }) {
   const first = bot.messages[0];
 
   return (
-    <main className="relative flex h-full min-w-0 flex-1 flex-col bg-app">
+    <main className="workspace-grid relative flex h-full min-w-0 flex-1 flex-col bg-app">
       {/* Header */}
-      <div className="flex items-center justify-between px-5 py-3">
+      <div className="relative z-40 flex items-center justify-between border-b border-hairline/70 bg-app/75 px-5 py-3 backdrop-blur-xl">
         <button
           onClick={() => dispatch({ type: "toggleSettings" })}
-          className="flex items-center gap-2.5 rounded-lg px-1.5 py-1 hover:bg-raised/50"
+          className="flex items-center gap-3 rounded-xl px-1.5 py-1 hover:bg-raised/50"
           title="Bot settings"
         >
           <MausAvatar color={bot.color} expression={expressionForBot(bot)} size={28} />
-          <span className="text-[15px] font-semibold text-ink">{bot.name}</span>
+          <span className="text-left">
+            <span className="block text-[14px] font-bold text-ink">{bot.name}</span>
+            <span className="block max-w-56 truncate font-mono text-[9px] uppercase tracking-[0.14em] text-ink-secondary">
+              {bot.title || "Independent agent"}
+            </span>
+          </span>
           {bot.busy && <Loader2 size={14} className="animate-spin text-ink-secondary" />}
         </button>
         <div className="flex items-center gap-2">
@@ -197,11 +221,13 @@ export function ChatView({ bot }: { bot: Bot }) {
       )}
 
       {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-5">
-        <div className="mx-auto flex max-w-[900px] flex-col gap-3 pb-4">
+      <div ref={scrollRef} className="relative z-10 flex-1 overflow-y-auto px-5">
+        <div className="mx-auto flex max-w-[960px] flex-col gap-4 pb-5">
           {first && (
-            <div className="py-3 text-center text-[13px] text-ink-secondary">
-              Today {formatTime(first.at)}
+            <div className="flex items-center gap-3 py-5 font-mono text-[9px] uppercase tracking-[0.18em] text-ink-secondary">
+              <span className="h-px flex-1 bg-hairline/70" />
+              Session opened · Today {formatTime(first.at)}
+              <span className="h-px flex-1 bg-hairline/70" />
             </div>
           )}
           {bot.messages.map((m) => {

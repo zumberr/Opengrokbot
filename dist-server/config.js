@@ -31,6 +31,7 @@ export function loadConfig() {
         /* first run — env fallbacks below */
     }
     cfg.xai = { key: process.env.XAI_API_KEY, ...cfg.xai };
+    cfg.custom = { key: process.env.CUSTOM_API_KEY, url: process.env.CUSTOM_API_URL, ...cfg.custom };
     cfg.composio = { key: process.env.COMPOSIO_KEY, ...cfg.composio };
     cfg.box = { token: process.env.BOX_TOKEN, ...cfg.box };
     return cfg;
@@ -46,7 +47,7 @@ export function saveConfig(patch) {
     catch {
         /* first write */
     }
-    for (const key of ["xai", "composio", "box"]) {
+    for (const key of ["xai", "custom", "composio", "box"]) {
         if (patch[key] && typeof patch[key] === "object") {
             disk[key] = { ...disk[key], ...patch[key] };
         }
@@ -54,24 +55,30 @@ export function saveConfig(patch) {
     mkdirSync(DATA_DIR, { recursive: true });
     writeFileSync(p, JSON.stringify(disk, null, 2));
 }
-// Default fleet: one instance per built-in driver (upstream
-// defaultInstanceIdForDriver — instanceId defaults to the driver kind).
-// Config-file keys are injected as per-instance environment so drivers
-// see them without needing real process env vars.
+// Default fleet: native drivers plus supported headless agent CLIs.
+// Configured instances override defaults by exact id; credentials are
+// injected per instance without mutating the server process environment.
 export function instanceConfigs(cfg) {
-    // No grok instance by default: the xAI API key is a credential Milind
-    // doesn't want to manage — the CLI agents + the box are the fleet. The
-    // driver stays registered; an `instances` entry brings it back anytime.
-    const map = cfg.instances && Object.keys(cfg.instances).length
-        ? cfg.instances
-        : {
-            claude: { driver: "claudeAgent" },
-            codex: { driver: "codex" },
-            computer: { driver: "boxAgent" },
-        };
+    const defaults = {
+        claude: { driver: "claudeAgent" },
+        codex: { driver: "codex" },
+        grok: { driver: "grok", displayName: "Grok API" },
+        "grok-build": { driver: "externalCli", displayName: "Grok Build", config: { preset: "grokBuild" } },
+        composer: { driver: "externalCli", displayName: "Cursor Composer", config: { preset: "cursor" } },
+        gemini: { driver: "externalCli", displayName: "Gemini / Antigravity", config: { preset: "gemini" } },
+        copilot: { driver: "externalCli", displayName: "GitHub Copilot", config: { preset: "copilot" } },
+        cline: { driver: "externalCli", displayName: "Cline", config: { preset: "cline" } },
+        kilo: { driver: "externalCli", displayName: "Kilo", config: { preset: "kilo" } },
+        opencode: { driver: "externalCli", displayName: "OpenCode", config: { preset: "opencode" } },
+        computer: { driver: "boxAgent" },
+        custom: { driver: "customApi" },
+    };
+    const map = { ...defaults, ...(cfg.instances ?? {}) };
     for (const entry of Object.values(map)) {
         entry.environment = {
             ...(cfg.xai?.key ? { XAI_API_KEY: cfg.xai.key } : {}),
+            ...(cfg.custom?.key ? { CUSTOM_API_KEY: cfg.custom.key } : {}),
+            ...(cfg.custom?.url ? { CUSTOM_API_URL: cfg.custom.url } : {}),
             ...(cfg.box?.token ? { BOX_TOKEN: cfg.box.token } : {}),
             ...entry.environment,
         };

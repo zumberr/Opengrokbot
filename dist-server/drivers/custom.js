@@ -1,33 +1,31 @@
 import { newEventId, newId } from "../contracts.js";
 import { appendNative } from "./native.js";
-const DRIVER_KIND = "grok";
-const DEFAULT_URL = "https://api.x.ai/v1";
+const DRIVER_KIND = "customApi";
 const MODELS = {
-    default: "grok-4.6",
+    default: "local-model",
     options: [
-        { id: "grok-4.6", label: "Grok 4.6" },
-        { id: "grok-build-0.1", label: "Grok Build 0.1" },
-        { id: "grok-4", label: "Grok 4" },
-        { id: "grok-4-fast", label: "Grok 4 Fast" },
-        { id: "grok-3-mini", label: "Grok 3 Mini" },
+        { id: "local-model", label: "Local Model" },
+        { id: "custom-model", label: "Custom Model" },
     ],
 };
 function decodeConfig(raw) {
     const o = (raw ?? {});
     return {
-        url: typeof o.url === "string" ? o.url : DEFAULT_URL,
-        apiKeyEnv: typeof o.apiKeyEnv === "string" ? o.apiKeyEnv : "XAI_API_KEY",
+        url: typeof o.url === "string" ? o.url : "http://localhost:11434/v1",
+        apiKeyEnv: typeof o.apiKeyEnv === "string" ? o.apiKeyEnv : "CUSTOM_API_KEY",
+        urlEnv: typeof o.urlEnv === "string" ? o.urlEnv : "CUSTOM_API_URL",
     };
 }
-export const GrokDriver = {
+export const CustomApiDriver = {
     driverKind: DRIVER_KIND,
-    metadata: { displayName: "Grok", supportsMultipleInstances: true },
+    metadata: { displayName: "Custom API", supportsMultipleInstances: true },
     models: MODELS,
     decodeConfig,
     defaultConfig: () => decodeConfig({}),
     async create(input) {
         const { instanceId, config } = input;
-        const apiKey = input.environment[config.apiKeyEnv] ?? process.env[config.apiKeyEnv] ?? "";
+        const apiKey = input.environment[config.apiKeyEnv] ?? process.env[config.apiKeyEnv] ?? "no-key";
+        const apiUrl = input.environment[config.urlEnv] ?? process.env[config.urlEnv] ?? config.url;
         const listeners = new Set();
         const active = new Map();
         const emit = (event) => {
@@ -42,15 +40,18 @@ export const GrokDriver = {
             createdAt: new Date().toISOString(),
         });
         const complete = async (messages, model, opts) => {
-            const res = await fetch(`${config.url}/chat/completions`, {
+            const res = await fetch(`${apiUrl.replace(/\/$/, "")}/chat/completions`, {
                 method: "POST",
-                headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+                headers: {
+                    authorization: `Bearer ${apiKey}`,
+                    "content-type": "application/json"
+                },
                 body: JSON.stringify({ model, messages, stream: opts.stream }),
                 signal: opts.signal ?? AbortSignal.timeout(120_000),
             });
             if (!res.ok) {
                 const body = await res.text().catch(() => "");
-                throw new Error(`xAI HTTP ${res.status}${body ? `: ${body.slice(0, 200)}` : ""}`);
+                throw new Error(`Custom API HTTP ${res.status}${body ? `: ${body.slice(0, 200)}` : ""}`);
             }
             if (!opts.stream) {
                 const json = await res.json();
@@ -101,8 +102,6 @@ export const GrokDriver = {
         };
         const sendTurn = async (turn) => {
             const { threadId } = turn;
-            if (!apiKey)
-                throw new Error(`no xAI key — set ${config.apiKeyEnv} or config.json xai.key`);
             if (active.has(threadId))
                 throw new Error("a turn is already running on this thread");
             const turnId = newId();
@@ -116,7 +115,7 @@ export const GrokDriver = {
                 })),
                 { role: "user", content: turn.text },
             ];
-            appendNative(threadId, { dir: "out", source: "xai.chat.completions", msg: { model: turn.model, messages } });
+            appendNative(threadId, { dir: "out", source: "custom.chat.completions", msg: { model: turn.model, messages } });
             emit({ ...base(threadId, turnId), type: "turn.started" });
             emit({ ...base(threadId, turnId), type: "session.started", sessionId: null, model: turn.model ?? MODELS.default });
             (async () => {
@@ -126,7 +125,7 @@ export const GrokDriver = {
                         signal: abort.signal,
                         onDelta: (delta) => emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta }),
                     });
-                    appendNative(threadId, { dir: "in", source: "xai.chat.completions", msg: { text, usage } });
+                    appendNative(threadId, { dir: "in", source: "custom.chat.completions", msg: { text, usage } });
                     if (text.trim()) {
                         emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text });
                     }
@@ -154,12 +153,6 @@ export const GrokDriver = {
             return { turnId };
         };
         const snapshot = async () => {
-            if (!apiKey) {
-                return {
-                    state: "unavailable",
-                    reason: `no xAI API key — add {"xai":{"key":"xai-…"}} to ~/.openmausbot/config.json or set ${config.apiKeyEnv}`,
-                };
-            }
             return { state: "available", authenticated: true, version: null };
         };
         return {
@@ -175,7 +168,7 @@ export const GrokDriver = {
                 sendTurn,
                 interruptTurn: async (threadId) => active.get(threadId)?.abort.abort(),
                 respondToRequest: async () => {
-                    throw new Error("grok driver has no pending asks");
+                    throw new Error("custom api driver has no pending asks");
                 },
                 hasSession: (threadId) => active.has(threadId),
                 stopAll: async () => {
@@ -188,7 +181,7 @@ export const GrokDriver = {
                 },
             },
             generateText: async (prompt) => {
-                const { text } = await complete([{ role: "user", content: prompt }], "grok-3-mini", { stream: false });
+                const { text } = await complete([{ role: "user", content: prompt }], MODELS.default, { stream: false });
                 return text;
             },
             dispose: async () => {

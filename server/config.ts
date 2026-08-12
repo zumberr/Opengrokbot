@@ -69,23 +69,25 @@ export function saveConfig(patch: Partial<AppConfig>): void {
   writeFileSync(p, JSON.stringify(disk, null, 2));
 }
 
-// Default fleet: one instance per built-in driver (upstream
-// defaultInstanceIdForDriver — instanceId defaults to the driver kind).
-// Config-file keys are injected as per-instance environment so drivers
-// see them without needing real process env vars.
+// Default fleet: native drivers plus supported headless agent CLIs.
+// Configured instances override defaults by exact id; credentials are
+// injected per instance without mutating the server process environment.
 export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
-  // No grok instance by default: the xAI API key is a credential Milind
-  // doesn't want to manage — the CLI agents + the box are the fleet. The
-  // driver stays registered; an `instances` entry brings it back anytime.
-  const map: InstanceConfigMap =
-    cfg.instances && Object.keys(cfg.instances).length
-      ? cfg.instances
-      : {
-          claude: { driver: "claudeAgent" },
-          codex: { driver: "codex" },
-          computer: { driver: "boxAgent" },
-          custom: { driver: "customApi" },
-        };
+  const defaults: InstanceConfigMap = {
+    claude: { driver: "claudeAgent" },
+    codex: { driver: "codex" },
+    grok: { driver: "grok", displayName: "Grok API" },
+    "grok-build": { driver: "externalCli", displayName: "Grok Build", config: { preset: "grokBuild" } },
+    composer: { driver: "externalCli", displayName: "Cursor Composer", config: { preset: "cursor" } },
+    gemini: { driver: "externalCli", displayName: "Gemini / Antigravity", config: { preset: "gemini" } },
+    copilot: { driver: "externalCli", displayName: "GitHub Copilot", config: { preset: "copilot" } },
+    cline: { driver: "externalCli", displayName: "Cline", config: { preset: "cline" } },
+    kilo: { driver: "externalCli", displayName: "Kilo", config: { preset: "kilo" } },
+    opencode: { driver: "externalCli", displayName: "OpenCode", config: { preset: "opencode" } },
+    computer: { driver: "boxAgent" },
+    custom: { driver: "customApi" },
+  };
+  const map: InstanceConfigMap = { ...defaults, ...(cfg.instances ?? {}) };
   for (const entry of Object.values(map)) {
     entry.environment = {
       ...(cfg.xai?.key ? { XAI_API_KEY: cfg.xai.key } : {}),

@@ -90,6 +90,8 @@ export interface SendTurnInput {
   threadId: ThreadId;
   text: string;
   model?: string;
+  /** Provider-specific reasoning budget chosen by smart routing. */
+  reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max";
   resumeCursor?: unknown;
   /** Prior turns for transcript-replay providers (API-backed drivers). */
   transcript?: Array<{ role: "user" | "assistant"; text: string }>;

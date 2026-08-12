@@ -37,6 +37,23 @@ O OpenMausBot trata a IA como um *aplicativo de mensagens*: uma lista de bots co
 - **Ditado por Voz Nativo.** Use o microfone para falar com seus bots através do sistema de reconhecimento de voz do Windows (PowerShell + .NET).
 - **Provedores Customizados.** Suporte a qualquer API compatível com OpenAI, permitindo usar modelos locais (Ollama, LM Studio) ou outros serviços (Groq, Together) via URL personalizada.
 - **Agentes com "Mãos".** Cada bot pode controlar um computador na nuvem ou o seu próprio PC Windows.
+- **Frota de até 100 bots.** Pesquise e gerencie agentes independentes em uma barra lateral compacta.
+- **Execuções em equipe.** Escolha até 7 bots colaboradores por tarefa; eles criam propostas em paralelo e o bot principal combina os resultados em uma resposta final.
+- **Roteamento inteligente por função.** Escolha Developer, Supervisor, Leader, Creative ou Auto; o app seleciona o melhor agente disponível e aplica fallbacks automaticamente.
+- **Arnês externos.** Descoberta nativa de Claude Agent, Cline, Codex, Cursor/Composer, Gemini/Antigravity, GitHub Copilot, Grok Build, Kilo e OpenCode instalados no Windows. O executável incluído na extensão Kilo também é detectado automaticamente.
+- **Atualizações pelo próprio aplicativo.** A versão instalada consulta as Releases públicas do GitHub e, quando encontra uma versão nova, mostra o botão **Instalar atualização** com progresso de download e reinicialização automática.
+
+### Modo inteligente
+
+Cada bot pode operar em modo automático ou com um modelo fixado manualmente:
+
+- **Developer:** prioriza Grok Build e Composer; em caso de falha passa por Kimi/Qwen/DeepSeek no OpenCode Go, modelos gratuitos, Kilo Auto Free, Gemini Flash e GPT-5.6 Luna.
+- **Supervisor:** prioriza GPT-5.6 Sol/Terra com esforço médio e revisa segurança, regressões, escopo e testes.
+- **Leader:** usa raciocínio alto para a decisão final e revalida o trabalho dos supervisores.
+- **Creative:** prioriza Grok 4.6, Gemini Pro e modelos premium adequados a exploração criativa.
+- **Auto:** equilibra custo, velocidade e qualidade para tarefas mistas.
+
+O seletor mostra a cadeia real e quais CLIs estão disponíveis. Se uma execução falhar, o bot avança para a próxima opção sem gravar a resposta parcial defeituosa no histórico.
 
 ## Como usar no Windows
 
@@ -78,7 +95,7 @@ Esta versão foi portada para garantir paridade total com o original de Mac:
 ## Requisitos
 - **Windows 10 ou 11**.
 - **Node.js 20+**.
-- Pelo menos um CLI de agente instalado ([`claude`](https://claude.com/claude-code) ou [`codex`](https://github.com/openai/codex)).
+- Pelo menos um CLI de agente instalado (`claude`, `codex`, `cursor-agent`, `agy`/`gemini`, `copilot`, `grok`, `cline`, `kilo` ou `opencode`). Extensões de IDE sem interface headless precisam do CLI correspondente separado.
 
 ---
 

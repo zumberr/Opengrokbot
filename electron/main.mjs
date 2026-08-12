@@ -1,4 +1,5 @@
 import { app, BrowserWindow, desktopCapturer, ipcMain, session, shell, systemPreferences, utilityProcess } from "electron";
+import electronUpdater from "electron-updater";
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,81 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEV_URL = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:5199";
 let SERVER_PORT = 8799;
 const APP_ICON = path.join(__dirname, "resources/app-icon.png");
+const { autoUpdater } = electronUpdater;
+
+let updateState = {
+  phase: app.isPackaged ? "idle" : "unavailable",
+  currentVersion: app.getVersion(),
+  availableVersion: null,
+  percent: null,
+  message: app.isPackaged
+    ? "Buscando actualizaciones de GitHub…"
+    : "Las actualizaciones están disponibles en la aplicación instalada.",
+};
+
+function publishUpdateState(patch = {}) {
+  updateState = { ...updateState, ...patch };
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send("update:state", updateState);
+  }
+  return updateState;
+}
+
+function friendlyUpdateError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/404|latest\.yml|release/i.test(message)) return "Todavía no hay una actualización publicada.";
+  if (/network|internet|connect|timeout|ENOTFOUND/i.test(message)) return "No se pudo conectar con GitHub. Inténtalo de nuevo.";
+  return "No se pudo comprobar la actualización. Inténtalo de nuevo.";
+}
+
+let updaterConfigured = false;
+function configureUpdater() {
+  if (updaterConfigured || !app.isPackaged) return;
+  updaterConfigured = true;
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.allowPrerelease = false;
+  autoUpdater.on("checking-for-update", () => publishUpdateState({ phase: "checking", message: "Buscando una nueva versión…" }));
+  autoUpdater.on("update-available", (info) => publishUpdateState({
+    phase: "available",
+    availableVersion: info.version,
+    percent: null,
+    message: `OpenMausBot ${info.version} está disponible.`,
+  }));
+  autoUpdater.on("update-not-available", () => publishUpdateState({
+    phase: "up-to-date",
+    availableVersion: null,
+    percent: null,
+    message: "Ya tienes la versión más reciente.",
+  }));
+  autoUpdater.on("download-progress", (progress) => publishUpdateState({
+    phase: "downloading",
+    percent: Math.max(0, Math.min(100, progress.percent)),
+    message: `Descargando actualización… ${Math.round(progress.percent)}%`,
+  }));
+  autoUpdater.on("update-downloaded", (info) => publishUpdateState({
+    phase: "downloaded",
+    availableVersion: info.version,
+    percent: 100,
+    message: "Descarga completa. Preparando la instalación…",
+  }));
+  autoUpdater.on("error", (error) => publishUpdateState({
+    phase: "error",
+    percent: null,
+    message: friendlyUpdateError(error),
+  }));
+}
+
+async function checkForAppUpdate() {
+  if (!app.isPackaged) return updateState;
+  configureUpdater();
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch (error) {
+    publishUpdateState({ phase: "error", message: friendlyUpdateError(error) });
+  }
+  return updateState;
+}
 
 // Packaged: the harness server ships in Resources (compiled JS, zero deps)
 // and runs on Electron's own Node via utilityProcess. It serves the built
@@ -20,6 +96,20 @@ const APP_ICON = path.join(__dirname, "resources/app-icon.png");
 // our API shape, not just a 200).
 let serverProc = null;
 let serverReady = true;
+let cuaCleanedUp = false;
+let cleanupPromise = null;
+
+function cleanupEmbeddedServices() {
+  if (cuaCleanedUp) return Promise.resolve();
+  if (cleanupPromise) return cleanupPromise;
+  try {
+    serverProc?.kill();
+  } catch {}
+  cleanupPromise = stopCua().finally(() => {
+    cuaCleanedUp = true;
+  });
+  return cleanupPromise;
+}
 async function startServerOn(port) {
   const entry = path.join(process.resourcesPath, "server", "index.js");
   const proc = utilityProcess.fork(entry, [], {
@@ -148,6 +238,33 @@ ipcMain.handle("perm:request-screen", async () => {
   return systemPreferences.getMediaAccessStatus?.("screen") ?? "unknown";
 });
 
+ipcMain.handle("update:get-state", () => updateState);
+ipcMain.handle("update:check", () => checkForAppUpdate());
+let updateInstallPromise = null;
+ipcMain.handle("update:install", async () => {
+  if (!app.isPackaged) return updateState;
+  if (updateInstallPromise) return updateInstallPromise;
+  updateInstallPromise = (async () => {
+    try {
+      configureUpdater();
+      if (updateState.phase !== "available" && updateState.phase !== "downloaded") {
+        await checkForAppUpdate();
+      }
+      if (updateState.phase === "available") await autoUpdater.downloadUpdate();
+      if (updateState.phase !== "downloaded") return updateState;
+      publishUpdateState({ phase: "installing", message: "Instalando y reiniciando OpenMausBot…" });
+      await cleanupEmbeddedServices();
+      autoUpdater.quitAndInstall(true, true);
+      return updateState;
+    } catch (error) {
+      return publishUpdateState({ phase: "error", percent: null, message: friendlyUpdateError(error) });
+    } finally {
+      updateInstallPromise = null;
+    }
+  })();
+  return updateInstallPromise;
+});
+
 ipcMain.handle("perm:open-settings", (_event, pane) => {
   if (process.platform === "darwin") {
     const panes = {
@@ -191,6 +308,9 @@ app.whenReady().then(async () => {
   startCua().catch((e) => console.error("[cua] start failed:", e));
   if (app.isPackaged) serverReady = await startServerPackaged();
   createWindow();
+  configureUpdater();
+  setTimeout(() => void checkForAppUpdate(), 2500).unref();
+  setInterval(() => void checkForAppUpdate(), 6 * 60 * 60 * 1000).unref();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -202,15 +322,8 @@ app.on("window-all-closed", () => {
 
 // EMBEDDING.md lifecycle rule: defer the first quit until the embedded
 // daemon's async cleanup completes — it can't run after the host exits.
-let cuaCleanedUp = false;
 app.on("before-quit", (e) => {
   if (cuaCleanedUp) return;
   e.preventDefault();
-  try {
-    serverProc?.kill();
-  } catch {}
-  stopCua().finally(() => {
-    cuaCleanedUp = true;
-    app.quit();
-  });
+  cleanupEmbeddedServices().finally(() => app.quit());
 });

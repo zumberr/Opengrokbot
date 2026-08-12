@@ -20,6 +20,7 @@ const COLORS = [
     "teal",
     "coral",
 ];
+export const MAX_BOTS = 100;
 const onboardingCard = () => ({
     title: "What do you mostly want help with?",
     subtitle: "Pick whatever's closest; we can always expand from there.",
@@ -81,6 +82,9 @@ export class Store {
         return this.bots.find((b) => b.threadId === threadId) ?? null;
     }
     createBot() {
+        if (this.bots.length >= MAX_BOTS) {
+            throw Object.assign(new Error(`bot limit reached (${MAX_BOTS})`), { status: 409 });
+        }
         const bot = {
             id: newId(),
             threadId: newId(),
@@ -91,6 +95,8 @@ export class Store {
             color: COLORS[this.bots.length % COLORS.length],
             unread: false,
             modelSelection: this.defaultSelection(),
+            routingMode: "smart",
+            smartRole: "balanced",
             resumeCursors: {},
             createdAt: Date.now(),
         };

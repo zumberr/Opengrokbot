@@ -36,7 +36,12 @@ export function ComputerMark({ size = 16, className }: IconProps) {
   return <Monitor size={size} className={cn("text-ink-secondary", className)} />;
 }
 
-export function ProviderMark({ driverKind, size, className }: IconProps & { driverKind: string }) {
+export function ProviderMark({
+  driverKind,
+  instanceId,
+  size = 16,
+  className,
+}: IconProps & { driverKind: string; instanceId?: string }) {
   switch (driverKind) {
     case "grok":
       return <GrokMark size={size} className={className} />;
@@ -46,7 +51,29 @@ export function ProviderMark({ driverKind, size, className }: IconProps & { driv
       return <CodexMark size={size} className={className} />;
     case "boxAgent":
       return <ComputerMark size={size} className={className} />;
-    default:
-      return <span className="text-[11px] font-semibold text-ink-secondary">{driverKind.slice(0, 2).toUpperCase()}</span>;
+    default: {
+      const marks: Record<string, { label: string; color: string }> = {
+        gemini: { label: "G", color: "text-sky-300" },
+        copilot: { label: "GH", color: "text-violet-300" },
+        "grok-build": { label: "X", color: "text-white" },
+        composer: { label: "CR", color: "text-cyan-200" },
+        cline: { label: "C", color: "text-cyan-300" },
+        kilo: { label: "K", color: "text-emerald-300" },
+        opencode: { label: "OC", color: "text-amber-200" },
+      };
+      const mark = marks[instanceId ?? ""] ?? {
+        label: driverKind.slice(0, 2).toUpperCase(),
+        color: "text-ink-secondary",
+      };
+      return (
+        <span
+          aria-hidden="true"
+          style={{ width: size, height: size, fontSize: Math.max(8, size * 0.5) }}
+          className={cn("inline-flex shrink-0 items-center justify-center font-black tracking-[-0.08em]", mark.color, className)}
+        >
+          {mark.label}
+        </span>
+      );
+    }
   }
 }

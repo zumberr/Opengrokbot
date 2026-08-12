@@ -1,28 +1,28 @@
 @import "tailwindcss";
 
-/* Grok Bot dark palette (pixel-sampled from the real app) */
+/* OpenGrok operations console */
 @theme {
   --animate-panel-in: panel-in 0.24s cubic-bezier(0.22, 1, 0.36, 1);
   --animate-pop-in: pop-in 0.2s cubic-bezier(0.22, 1, 0.36, 1);
 
-  --color-app: #070707;
-  --color-panel: #111111;
-  --color-raised: #2f2f2f;
-  --color-raised-hover: #3d3d3d;
-  --color-card: #262626;
-  --color-inset: #191919;
-  --color-hairline: #333333;
-  --color-ink: #fcfcfc;
-  --color-ink-secondary: #fcfcfc99;
-  --color-accent: #1084fe;
-  --color-accent-border: #459ffe;
-  --color-bubble-user: #5a5a5a;
-  --color-success: #38d591;
-  --color-danger: #ff5667;
-  --color-warning: #ff9800;
+  --color-app: #07100f;
+  --color-panel: #0b1514;
+  --color-raised: #172422;
+  --color-raised-hover: #20312e;
+  --color-card: #111e1c;
+  --color-inset: #091311;
+  --color-hairline: #263b37;
+  --color-ink: #ecf8f4;
+  --color-ink-secondary: #90aaa3;
+  --color-accent: #5cf6be;
+  --color-accent-border: #86ffd1;
+  --color-bubble-user: #1d5f4d;
+  --color-success: #58e5a8;
+  --color-danger: #ff6d7d;
+  --color-warning: #ffc15c;
 
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text",
-    "Segoe UI", system-ui, sans-serif;
+  --font-sans: "Bahnschrift", "Aptos", "Segoe UI", sans-serif;
+  --font-mono: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
 
   --radius-lg: 6px;
   --radius-xl: 10px;
@@ -35,18 +35,93 @@ body,
 }
 
 body {
-  background-color: var(--color-app);
+  background:
+    radial-gradient(circle at 72% -10%, rgba(92, 246, 190, 0.09), transparent 36%),
+    var(--color-app);
   color: var(--color-ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
 
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 72%, transparent);
+  outline-offset: 2px;
+}
+
+.workspace-grid::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.3;
+  background-image:
+    linear-gradient(rgba(92, 246, 190, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(92, 246, 190, 0.035) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: linear-gradient(to bottom, black, transparent 78%);
+}
+
+.workspace-grid::after {
+  content: "";
+  position: absolute;
+  top: 8%;
+  right: 6%;
+  width: 280px;
+  height: 280px;
+  pointer-events: none;
+  border-radius: 999px;
+  background: rgba(92, 246, 190, 0.035);
+  filter: blur(70px);
+}
+
+.sidebar-grid {
+  background-image:
+    linear-gradient(180deg, rgba(92, 246, 190, 0.03), transparent 28%),
+    radial-gradient(circle at 50% 0, rgba(92, 246, 190, 0.06), transparent 30%);
+}
+
+.composer-shell {
+  overflow: visible;
+  border: 1px solid color-mix(in srgb, var(--color-hairline) 88%, var(--color-accent));
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--color-panel) 90%, transparent);
+  box-shadow:
+    0 18px 60px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  backdrop-filter: blur(18px);
+}
+
+.composer-shell:focus-within {
+  border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-hairline));
+  box-shadow:
+    0 18px 60px rgba(0, 0, 0, 0.36),
+    0 0 0 3px rgba(92, 246, 190, 0.045);
+}
+
+.status-pulse {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--color-accent);
+  box-shadow: 0 0 0 0 rgba(92, 246, 190, 0.45);
+  animation: signal-pulse 1.8s ease-out infinite;
+}
+
 ::-webkit-scrollbar {
   width: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #3d3d3d;
+  background: #28413b;
   border-radius: 4px;
 }
 ::-webkit-scrollbar-track {
@@ -60,4 +135,19 @@ body {
 @keyframes pop-in {
   from { transform: scale(0.96) translateY(6px); opacity: 0; }
   to { transform: scale(1) translateY(0); opacity: 1; }
+}
+
+@keyframes signal-pulse {
+  70% { box-shadow: 0 0 0 6px rgba(92, 246, 190, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(92, 246, 190, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }

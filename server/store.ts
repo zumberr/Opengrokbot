@@ -53,6 +53,11 @@ export interface Message {
   /** screen messages: a frame of the bot's computer (base64 image) */
   png?: string;
   mime?: string;
+  /** Present when another bot delivered this message during a team run. */
+  senderBotId?: string;
+  senderName?: string;
+  senderColor?: MausColor;
+  collaborationId?: string;
   at: number;
 }
 
@@ -67,6 +72,10 @@ export interface BotRecord {
   mascotExpression?: MausExpression | null;
   unread: boolean;
   modelSelection: ModelSelection;
+  /** Smart routing chooses a provider/model by workload; manual preserves modelSelection. */
+  routingMode?: "smart" | "manual";
+  smartRole?: "developer" | "supervisor" | "leader" | "creative" | "balanced";
+  lastRoute?: ModelSelection & { reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max" };
   /** provider-native continuation per instance (e.g. claude session id) */
   resumeCursors: Record<string, unknown>;
   /** which computer the bot acts on: its cloud box, this Mac (local CUA),
@@ -93,6 +102,8 @@ const COLORS: MausColor[] = [
   "teal",
   "coral",
 ];
+
+export const MAX_BOTS = 100;
 
 const onboardingCard = (): OptionCardData => ({
   title: "What do you mostly want help with?",
@@ -160,6 +171,9 @@ export class Store {
   }
 
   createBot(): BotRecord {
+    if (this.bots.length >= MAX_BOTS) {
+      throw Object.assign(new Error(`bot limit reached (${MAX_BOTS})`), { status: 409 });
+    }
     const bot: BotRecord = {
       id: newId(),
       threadId: newId(),
@@ -170,6 +184,8 @@ export class Store {
       color: COLORS[this.bots.length % COLORS.length],
       unread: false,
       modelSelection: this.defaultSelection(),
+      routingMode: "smart",
+      smartRole: "balanced",
       resumeCursors: {},
       createdAt: Date.now(),
     };

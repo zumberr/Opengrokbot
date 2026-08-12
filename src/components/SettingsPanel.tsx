@@ -1,4 +1,5 @@
-import { ChevronLeft, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ChevronLeft, Download, RefreshCw, ShieldCheck, X } from "lucide-react";
 import { useStore, type Bot } from "@/state/store";
 import { MausAvatar } from "./Avatar";
 import {
@@ -27,6 +28,82 @@ function Field({
 
 const inputCls =
   "w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2.5 text-[15px] text-ink placeholder:text-ink-secondary focus:outline-none focus:border-hairline";
+
+type UpdateState = Awaited<ReturnType<NonNullable<Window["ogb"]>["updateState"]>>;
+
+function AppUpdateCard() {
+  const [state, setState] = useState<UpdateState | null>(null);
+  const bridge = window.ogb;
+
+  useEffect(() => {
+    if (!bridge) return;
+    void bridge.updateState().then(setState);
+    return bridge.onUpdateState(setState);
+  }, [bridge]);
+
+  const busy = state?.phase === "checking" || state?.phase === "downloading" || state?.phase === "installing";
+  const hasUpdate = state?.phase === "available" || state?.phase === "downloaded";
+  const buttonLabel = hasUpdate
+    ? `Instalar actualización${state?.availableVersion ? ` ${state.availableVersion}` : ""}`
+    : state?.phase === "error"
+      ? "Reintentar"
+      : "Buscar actualizaciones";
+
+  const runAction = async () => {
+    if (!bridge || busy) return;
+    if (hasUpdate) await bridge.installUpdate();
+    else await bridge.checkForUpdates();
+  };
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-accent/20 bg-card">
+      <div className="flex items-start gap-3 p-4">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-accent/10 text-accent">
+          <ShieldCheck size={20} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-[15px] font-medium text-ink">Actualizaciones</div>
+            {state?.currentVersion && (
+              <span className="rounded-md bg-inset px-2 py-1 font-mono text-[10px] text-ink-secondary">
+                v{state.currentVersion}
+              </span>
+            )}
+          </div>
+          <div className="mt-1 text-[13px] leading-5 text-ink-secondary">
+            {state?.message ?? (bridge ? "Consultando el estado…" : "Disponible en la aplicación de escritorio.")}
+          </div>
+        </div>
+      </div>
+
+      {state?.phase === "downloading" && (
+        <div className="mx-4 mb-3 h-1.5 overflow-hidden rounded-full bg-inset">
+          <div
+            className="h-full rounded-full bg-accent transition-[width] duration-300"
+            style={{ width: `${state.percent ?? 0}%` }}
+          />
+        </div>
+      )}
+
+      {bridge && state?.phase !== "unavailable" && (
+        <button
+          onClick={() => void runAction()}
+          disabled={busy}
+          className={cn(
+            "flex w-full items-center justify-center gap-2 border-t border-hairline/40 px-4 py-3 text-[13px] font-semibold transition-colors",
+            hasUpdate
+              ? "bg-accent/10 text-accent hover:bg-accent/15"
+              : "text-ink-secondary hover:bg-raised hover:text-ink",
+            busy && "cursor-wait opacity-70",
+          )}
+        >
+          {busy ? <RefreshCw className="animate-spin" size={15} /> : hasUpdate ? <Download size={15} /> : <RefreshCw size={15} />}
+          {busy ? state?.message : buttonLabel}
+        </button>
+      )}
+    </div>
+  );
+}
 
 export function SettingsPanel({ bot }: { bot: Bot }) {
   const { dispatch } = useStore();
@@ -143,9 +220,9 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
 
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
-              <div className="text-[15px] font-medium text-ink">Model</div>
+              <div className="text-[15px] font-medium text-ink">Routing</div>
               <div className="mt-0.5 text-[13px] text-ink-secondary">
-                Which provider and model this bot runs on
+                Automatic by role, with manual override
               </div>
             </div>
             <ModelPicker bot={bot} />
@@ -201,6 +278,8 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               />
             </button>
           </div>
+
+          <AppUpdateCard />
         </div>
       </div>
     </aside>

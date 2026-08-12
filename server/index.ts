@@ -14,7 +14,7 @@ import type { RuntimeEvent } from "./contracts.ts";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { EventBus } from "./harness/bus.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
-import { Store, type Message } from "./store.ts";
+import { MAX_BOTS, Store, type Message } from "./store.ts";
 
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const STATIC_DIR = process.env.OMB_STATIC_DIR || null;
@@ -68,6 +68,198 @@ function broadcast(payload: unknown) {
 const toolMessageByItem = new Map<string, string>(); // itemId -> messageId
 const askMessageByRequest = new Map<string, string>(); // requestId -> messageId
 
+type CollaborationTurn = {
+  collaborationId: string;
+  coordinatorId: string;
+  phase: "draft" | "synthesis";
+  output: string[];
+};
+
+type CollaborationRun = {
+  id: string;
+  coordinatorId: string;
+  participantIds: string[];
+  prompt: string;
+  pending: Set<string>;
+  responses: Map<string, string>;
+};
+
+const collaborationTurns = new Map<string, CollaborationTurn>();
+const collaborations = new Map<string, CollaborationRun>();
+
+type SmartRole = "developer" | "supervisor" | "leader" | "creative" | "balanced";
+type SmartCandidate = {
+  instanceId: string;
+  model: string;
+  reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max";
+  label: string;
+};
+type SmartRun = {
+  botId: string;
+  candidates: SmartCandidate[];
+  index: number;
+  failures: string[];
+  launch: () => Promise<void>;
+};
+
+const SMART_POLICIES: Record<SmartRole, { label: string; description: string; candidates: SmartCandidate[] }> = {
+  developer: {
+    label: "Developer",
+    description: "Open and efficient coding agents first; premium models only as fallback.",
+    candidates: [
+      { instanceId: "grok-build", model: "grok-4.6", label: "Grok Build · Grok 4.6" },
+      { instanceId: "composer", model: "composer-2.5", label: "Composer 2.5 · Cursor" },
+      { instanceId: "opencode", model: "opencode-go/kimi-k2.7-code", label: "Kimi K2.7 Code · OpenCode Go" },
+      { instanceId: "opencode", model: "opencode-go/qwen3.7-plus", label: "Qwen 3.7 Plus · OpenCode Go" },
+      { instanceId: "opencode", model: "opencode-go/deepseek-v4-flash", label: "DeepSeek V4 Flash · OpenCode Go" },
+      { instanceId: "opencode", model: "opencode/deepseek-v4-flash-free", label: "DeepSeek V4 Flash Free" },
+      { instanceId: "opencode", model: "opencode/mimo-v2.5-free", label: "MiMo V2.5 Free" },
+      { instanceId: "opencode", model: "opencode/north-mini-code-free", label: "North Mini Code Free" },
+      { instanceId: "kilo", model: "kilo/kilo-auto/free", label: "Kilo Auto Free" },
+      { instanceId: "gemini", model: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+      { instanceId: "copilot", model: "auto", label: "GitHub Copilot Auto" },
+      { instanceId: "codex", model: "gpt-5.6-luna", reasoningEffort: "medium", label: "GPT-5.6 Luna · medium" },
+    ],
+  },
+  supervisor: {
+    label: "Supervisor",
+    description: "Reviews developer output for regressions, unsafe changes, and missing verification.",
+    candidates: [
+      { instanceId: "codex", model: "gpt-5.6-sol", reasoningEffort: "medium", label: "GPT-5.6 Sol · medium" },
+      { instanceId: "codex", model: "gpt-5.6-terra", reasoningEffort: "medium", label: "GPT-5.6 Terra · medium" },
+      { instanceId: "gemini", model: "gemini-3.1-pro", label: "Gemini 3.1 Pro" },
+      { instanceId: "grok-build", model: "grok-4.6", label: "Grok 4.6" },
+      { instanceId: "claude", model: "claude-sonnet-5", label: "Claude Sonnet 5" },
+    ],
+  },
+  leader: {
+    label: "Leader",
+    description: "Final quality gate with deeper reasoning after supervisor review.",
+    candidates: [
+      { instanceId: "codex", model: "gpt-5.6-sol", reasoningEffort: "high", label: "GPT-5.6 Sol · high" },
+      { instanceId: "grok-build", model: "grok-4.6", label: "Grok 4.6" },
+      { instanceId: "gemini", model: "gemini-3.1-pro", label: "Gemini 3.1 Pro" },
+      { instanceId: "claude", model: "claude-opus-5", label: "Claude Opus 5" },
+      { instanceId: "codex", model: "gpt-5.6-terra", reasoningEffort: "high", label: "GPT-5.6 Terra · high" },
+    ],
+  },
+  creative: {
+    label: "Creative",
+    description: "Idea generation, design, writing, and high-variance exploration.",
+    candidates: [
+      { instanceId: "grok-build", model: "grok-4.6", label: "Grok 4.6" },
+      { instanceId: "grok", model: "grok-4.6", label: "Grok 4.6 API" },
+      { instanceId: "gemini", model: "gemini-3.1-pro", label: "Gemini 3.1 Pro" },
+      { instanceId: "claude", model: "claude-opus-5", label: "Claude Opus 5" },
+      { instanceId: "codex", model: "gpt-5.6-sol", reasoningEffort: "medium", label: "GPT-5.6 Sol · medium" },
+    ],
+  },
+  balanced: {
+    label: "Auto",
+    description: "Balanced automatic route for mixed everyday work.",
+    candidates: [
+      { instanceId: "opencode", model: "opencode-go/kimi-k2.7-code", label: "Kimi K2.7 Code · OpenCode Go" },
+      { instanceId: "codex", model: "gpt-5.6-luna", reasoningEffort: "medium", label: "GPT-5.6 Luna · medium" },
+      { instanceId: "grok-build", model: "grok-4.6", label: "Grok Build · Grok 4.6" },
+      { instanceId: "composer", model: "composer-2.5", label: "Composer 2.5 · Cursor" },
+      { instanceId: "gemini", model: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+      { instanceId: "claude", model: "claude-sonnet-5", label: "Claude Sonnet 5" },
+      { instanceId: "codex", model: "gpt-5.6-sol", reasoningEffort: "medium", label: "GPT-5.6 Sol · medium" },
+    ],
+  },
+};
+
+const smartRuns = new Map<string, SmartRun>();
+let availabilityCache: { at: number; available: Set<string> } | null = null;
+
+async function availableInstances() {
+  if (availabilityCache && Date.now() - availabilityCache.at < 30_000) return availabilityCache.available;
+  const described = await registry.describe();
+  const available = new Set(described.filter((item) => item.snapshot.state === "available").map((item) => item.instanceId));
+  availabilityCache = { at: Date.now(), available };
+  return available;
+}
+
+async function smartCandidates(role: SmartRole) {
+  const available = await availableInstances();
+  return SMART_POLICIES[role].candidates.filter((candidate) => available.has(candidate.instanceId));
+}
+
+function appendAndBroadcast(threadId: string, message: Omit<Message, "id" | "at">) {
+  const full = store.appendMessage(threadId, message);
+  broadcast({ kind: "message", threadId, message: full });
+  return full;
+}
+
+function completeCollaborationDraft(botId: string, threadId: string) {
+  const turn = collaborationTurns.get(threadId);
+  if (!turn || turn.phase !== "draft") return;
+  collaborationTurns.delete(threadId);
+  const run = collaborations.get(turn.collaborationId);
+  if (!run) return;
+
+  run.responses.set(botId, turn.output.join("\n").trim() || "No response was produced.");
+  run.pending.delete(botId);
+  broadcast({
+    kind: "collaboration",
+    collaborationId: run.id,
+    coordinatorId: run.coordinatorId,
+    pending: run.pending.size,
+    total: run.participantIds.length,
+  });
+  if (run.pending.size) return;
+
+  const coordinator = store.bot(run.coordinatorId);
+  if (!coordinator) {
+    collaborations.delete(run.id);
+    return;
+  }
+
+  const peerIds = run.participantIds.filter((id) => id !== run.coordinatorId);
+  for (const peerId of peerIds) {
+    const peer = store.bot(peerId);
+    if (!peer) continue;
+    appendAndBroadcast(coordinator.threadId, {
+      role: "user",
+      kind: "text",
+      text: run.responses.get(peerId) ?? "No response was produced.",
+      senderBotId: peer.id,
+      senderName: peer.name,
+      senderColor: peer.color,
+      collaborationId: run.id,
+    });
+  }
+
+  const peerBrief = peerIds
+    .map((id) => {
+      const peer = store.bot(id);
+      return `### ${peer?.name ?? "Collaborator"}\n${run.responses.get(id) ?? "No response was produced."}`;
+    })
+    .join("\n\n");
+  const synthesis = [
+    `This is the synthesis phase of team run ${run.id}.`,
+    `Original request: ${run.prompt}`,
+    "Review the collaborators' drafts below. Produce one decisive final answer for the user, resolving conflicts and keeping the strongest details.",
+    peerBrief,
+  ].join("\n\n");
+
+  collaborations.delete(run.id);
+  setTimeout(() => {
+    void startTurn(coordinator.id, synthesis, {
+      collaborationId: run.id,
+      phase: "synthesis",
+      displayText: "Team drafts received. Building the final synthesis…",
+      senderName: "Team orchestrator",
+    }).catch((error) => {
+      appendAndBroadcast(coordinator.threadId, {
+        role: "bot",
+        kind: "activity",
+        tool: { name: `team synthesis failed: ${(error as Error).message.slice(0, 140)}`, ok: false },
+      });
+    });
+  }, 0);
+}
+
 bus.subscribe((event: RuntimeEvent) => {
   broadcast({ kind: "runtime", event });
   const bot = store.botByThread(event.threadId);
@@ -88,6 +280,8 @@ bus.subscribe((event: RuntimeEvent) => {
     case "item.completed":
       if (event.itemType === "assistant_text") {
         pushMessage({ role: "bot", kind: "text", text: event.text });
+        const collaboration = collaborationTurns.get(event.threadId);
+        if (collaboration) collaboration.output.push(event.text);
       } else if (event.itemType === "tool" && event.itemId) {
         const messageId = toolMessageByItem.get(event.itemId);
         if (messageId) {
@@ -136,16 +330,53 @@ bus.subscribe((event: RuntimeEvent) => {
       }
       break;
     }
-    case "runtime.error":
-      pushMessage({ role: "bot", kind: "activity", tool: { name: `error: ${event.message.slice(0, 160)}`, ok: false } });
+    case "runtime.error": {
+      const smart = smartRuns.get(event.threadId);
+      if (smart) smart.failures.push(event.message);
+      else pushMessage({ role: "bot", kind: "activity", tool: { name: `error: ${event.message.slice(0, 160)}`, ok: false } });
       break;
+    }
     case "turn.completed": {
+      const smart = smartRuns.get(event.threadId);
+      if (!event.ok && smart && smart.index + 1 < smart.candidates.length) {
+        const previous = smart.candidates[smart.index];
+        smart.index += 1;
+        const next = smart.candidates[smart.index];
+        pushMessage({
+          role: "bot",
+          kind: "activity",
+          tool: { name: `Smart fallback: ${previous.label} → ${next.label}`, ok: true },
+        });
+        void smart.launch().catch((error) => {
+          smartRuns.delete(event.threadId);
+          pushMessage({
+            role: "bot",
+            kind: "activity",
+            tool: { name: `all smart routes failed: ${(error as Error).message.slice(0, 130)}`, ok: false },
+          });
+          store.patchBot(bot.id, { busy: false, unread: true });
+          broadcast({ kind: "bot", bot: store.bot(bot.id) });
+          completeCollaborationDraft(bot.id, event.threadId);
+        });
+        break;
+      }
+      if (smart) {
+        smartRuns.delete(event.threadId);
+        if (!event.ok && smart.failures.length) {
+          pushMessage({
+            role: "bot",
+            kind: "activity",
+            tool: { name: `all smart routes failed: ${smart.failures.at(-1)!.slice(0, 130)}`, ok: false },
+          });
+        }
+      }
       // the last live frame becomes a settled inline screen message —
       // the screenshot-in-chat moment
       const frame = stopScreenPoller(bot.id);
       if (frame) pushMessage({ role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
       store.patchBot(bot.id, { busy: false, unread: true });
       broadcast({ kind: "bot", bot: store.bot(bot.id) });
+      completeCollaborationDraft(bot.id, event.threadId);
       break;
     }
   }
@@ -225,20 +456,46 @@ function readCuaConnection(): { command: string; args: string[]; env: Record<str
 }
 
 // ── turn dispatch (upstream ProviderCommandReactor, miniature) ──────────
-async function startTurn(botId: string, text: string) {
+type StartTurnOptions = {
+  collaborationId?: string;
+  coordinatorId?: string;
+  phase?: "draft" | "synthesis";
+  displayText?: string;
+  senderBotId?: string;
+  senderName?: string;
+};
+
+async function startTurn(botId: string, text: string, options: StartTurnOptions = {}) {
   const bot = store.bot(botId);
   if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
   if (bot.busy) throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
 
-  const instance = registry.get(bot.modelSelection.instanceId);
-  if (!instance) {
+  const role = bot.smartRole ?? "balanced";
+  const candidates: SmartCandidate[] = bot.routingMode === "manual"
+    ? [{ ...bot.modelSelection, label: bot.modelSelection.model }]
+    : await smartCandidates(role);
+  const initialInstance = registry.get(candidates[0]?.instanceId ?? "");
+  if (!candidates.length || !initialInstance) {
     throw Object.assign(
-      new Error(`provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`),
+      new Error(
+        bot.routingMode === "manual"
+          ? `provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`
+          : `no providers are available for the ${SMART_POLICIES[role].label} smart route`,
+      ),
       { status: 409 },
     );
   }
 
-  const userMessage = store.appendMessage(bot.threadId, { role: "user", kind: "text", text });
+  const sender = options.senderBotId ? store.bot(options.senderBotId) : null;
+  const userMessage = store.appendMessage(bot.threadId, {
+    role: "user",
+    kind: "text",
+    text: options.displayText ?? text,
+    ...(options.senderBotId ? { senderBotId: options.senderBotId } : {}),
+    ...(options.senderName || sender?.name ? { senderName: options.senderName ?? sender?.name } : {}),
+    ...(sender ? { senderColor: sender.color } : {}),
+    ...(options.collaborationId ? { collaborationId: options.collaborationId } : {}),
+  });
   broadcast({ kind: "message", threadId: bot.threadId, message: userMessage });
 
   // transcript for API-backed drivers: settled text turns only
@@ -262,15 +519,24 @@ async function startTurn(botId: string, text: string) {
   store.patchBot(bot.id, { busy: true, unread: false });
   broadcast({ kind: "bot", bot: store.bot(bot.id) });
 
+  if (options.collaborationId && options.coordinatorId && options.phase) {
+    collaborationTurns.set(bot.threadId, {
+      collaborationId: options.collaborationId,
+      coordinatorId: options.coordinatorId,
+      phase: options.phase,
+      output: [],
+    });
+  }
+
   void (async () => {
     try {
-      const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
+      const integrations: NonNullable<Parameters<typeof initialInstance.adapter.sendTurn>[0]["integrations"]> = {};
       if (cfg.composio?.key) integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
       const wants = bot.computer; // 'cloud' | 'local' | 'off' | undefined(auto)
       if (wants !== "off" && wants !== "local" && box.boxConfigured(cfg)) {
         let b = await box.findBox(cfg, bot.id).catch(() => null);
         // the Computer driver runs ON the box — provision it on first use
-        if (!b && instance.driverKind === "boxAgent") {
+        if (!b && initialInstance.driverKind === "boxAgent") {
           broadcast({ kind: "computer", botId: bot.id, state: "provisioning" });
           await box.provisionBox(cfg, bot.id, bot.name);
           b = await box.findBox(cfg, bot.id).catch(() => null);
@@ -285,21 +551,69 @@ async function startTurn(botId: string, text: string) {
         if (cua) integrations.localComputer = cua;
       }
 
-      await instance.adapter.sendTurn({
-        threadId: bot.threadId,
-        text,
-        model: bot.modelSelection.model,
-        resumeCursor: bot.resumeCursors[bot.modelSelection.instanceId],
-        transcript,
-        system:
-          persona +
-          (integrations.computer && instance.driverKind !== "boxAgent"
-            ? " You have your own cloud computer — use the computer tools (screenshot, computer_exec, open_url) whenever browsing or acting on a desktop helps."
-            : integrations.localComputer
-              ? " You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
-              : ""),
-        integrations,
-      });
+      const launch = async (): Promise<void> => {
+        const smart = smartRuns.get(bot.threadId);
+        const candidate = smart ? smart.candidates[smart.index] : candidates[0];
+        const instance = registry.get(candidate.instanceId);
+        if (!instance) throw new Error(`${candidate.label} became unavailable`);
+        store.patchBot(bot.id, {
+          lastRoute: {
+            instanceId: candidate.instanceId,
+            model: candidate.model,
+            ...(candidate.reasoningEffort ? { reasoningEffort: candidate.reasoningEffort } : {}),
+          },
+        });
+        broadcast({ kind: "bot", bot: store.bot(bot.id) });
+        try {
+          await instance.adapter.sendTurn({
+            threadId: bot.threadId,
+            text,
+            model: candidate.model,
+            reasoningEffort: candidate.reasoningEffort,
+            resumeCursor: bot.resumeCursors[candidate.instanceId],
+            transcript,
+            system:
+              persona +
+              ` Smart role: ${SMART_POLICIES[role].label}. ` +
+              (role === "developer"
+                ? "Implement scoped changes carefully and validate them. Do not modify unrelated code."
+                : role === "supervisor"
+                  ? "Review prior work for defects, unsafe behavior, regressions, missing tests, and scope drift. Be evidence-driven."
+                  : role === "leader"
+                    ? "Act as the final quality gate. Recheck supervisor conclusions and reject unsafe or unverified work."
+                    : role === "creative"
+                      ? "Explore distinctive, high-quality creative options while respecting hard constraints."
+                      : "Choose the most useful balance of execution, verification, and clarity.") +
+              " You may collaborate with other bots when the user starts a team run. Treat messages labelled as coming from another bot as peer work: verify it, improve it, and clearly resolve disagreements." +
+              (integrations.computer && instance.driverKind !== "boxAgent"
+                ? " You have your own cloud computer — use the computer tools whenever browsing or acting on a desktop helps."
+                : integrations.localComputer
+                  ? " You can act on the user's computer through computer tools. Inspect state first and act carefully."
+                  : ""),
+            integrations,
+          });
+        } catch (error) {
+          const current = smartRuns.get(bot.threadId);
+          if (current && current.index + 1 < current.candidates.length) {
+            current.failures.push((error as Error).message);
+            const previous = current.candidates[current.index];
+            current.index += 1;
+            const next = current.candidates[current.index];
+            appendAndBroadcast(bot.threadId, {
+              role: "bot",
+              kind: "activity",
+              tool: { name: `Smart fallback: ${previous.label} → ${next.label}`, ok: true },
+            });
+            await current.launch();
+            return;
+          }
+          throw error;
+        }
+      };
+      if (bot.routingMode !== "manual") {
+        smartRuns.set(bot.threadId, { botId: bot.id, candidates, index: 0, failures: [], launch });
+      }
+      await launch();
       if (integrations.computer) startScreenPoller(bot.id);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -311,6 +625,8 @@ async function startTurn(botId: string, text: string) {
       broadcast({ kind: "message", threadId: bot.threadId, message: failure });
       store.patchBot(bot.id, { busy: false });
       broadcast({ kind: "bot", bot: store.bot(bot.id) });
+      smartRuns.delete(bot.threadId);
+      completeCollaborationDraft(bot.id, bot.threadId);
     }
   })();
 }
@@ -328,10 +644,12 @@ function configStatus() {
 /** Rebuild the provider fleet after a config change so new keys take
  * effect without a server restart (kills any in-flight turns). */
 async function reloadProviders() {
+  smartRuns.clear();
   bus.detachAll();
   await registry.disposeAll();
   await registry.load(instanceConfigs(cfg));
   bus.attach(registry.instances());
+  availabilityCache = null;
 }
 
 // ── HTTP plumbing ─────────────────────────────────────────────────────
@@ -389,6 +707,21 @@ const server = createServer(async (req, res) => {
     if (method === "GET" && path === "/api/bots") {
       return json(res, 200, {
         bots: store.bots.map((b) => ({ ...b, messages: store.messagesFor(b.threadId) })),
+        maxBots: MAX_BOTS,
+      });
+    }
+    if (method === "GET" && path === "/api/smart-routing") {
+      const available = await availableInstances();
+      return json(res, 200, {
+        profiles: Object.entries(SMART_POLICIES).map(([id, policy]) => ({
+          id,
+          label: policy.label,
+          description: policy.description,
+          candidates: policy.candidates.map((candidate) => ({
+            ...candidate,
+            available: available.has(candidate.instanceId),
+          })),
+        })),
       });
     }
     if (method === "POST" && path === "/api/bots") {
@@ -399,8 +732,14 @@ const server = createServer(async (req, res) => {
     let m = path.match(/^\/api\/bots\/([\w-]+)$/);
     if (m && method === "PATCH") {
       const body = await readBody(req);
+      if (body.routingMode !== undefined && !["smart", "manual"].includes(body.routingMode)) {
+        return json(res, 400, { error: "routingMode must be smart or manual" });
+      }
+      if (body.smartRole !== undefined && !["developer", "supervisor", "leader", "creative", "balanced"].includes(body.smartRole)) {
+        return json(res, 400, { error: "unknown smart role" });
+      }
       const patch: Record<string, unknown> = {};
-      for (const key of ["name", "title", "description", "notifications", "modelSelection", "unread", "computer", "color", "mascotExpression", "pinned", "hidden"] as const) {
+      for (const key of ["name", "title", "description", "notifications", "modelSelection", "routingMode", "smartRole", "unread", "computer", "color", "mascotExpression", "pinned", "hidden"] as const) {
         if (body[key] !== undefined) patch[key] = body[key];
       }
       const bot = store.patchBot(m[1], patch);
@@ -413,7 +752,8 @@ const server = createServer(async (req, res) => {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
       // a running turn dies with its bot
-      await registry.get(bot.modelSelection.instanceId)?.adapter.interruptTurn(bot.threadId).catch(() => {});
+      smartRuns.delete(bot.threadId);
+      await registry.get(bot.lastRoute?.instanceId ?? bot.modelSelection.instanceId)?.adapter.interruptTurn(bot.threadId).catch(() => {});
       stopScreenPoller(bot.id);
       store.deleteBot(bot.id);
       for (const dir of [EVENTS_DIR, NATIVE_DIR]) {
@@ -451,12 +791,65 @@ const server = createServer(async (req, res) => {
       await startTurn(m[1], text);
       return json(res, 202, { ok: true });
     }
+    m = path.match(/^\/api\/bots\/([\w-]+)\/collaborate$/);
+    if (m && method === "POST") {
+      const coordinator = store.bot(m[1]);
+      if (!coordinator) return json(res, 404, { error: "no such coordinator bot" });
+      const body = await readBody(req);
+      const text = String(body.text ?? "").trim();
+      if (!text) return json(res, 400, { error: "text required" });
+      const requested: string[] = Array.isArray(body.botIds)
+        ? body.botIds.map((id: unknown) => String(id))
+        : [];
+      const peerIds = [...new Set(requested)].filter((id) => id !== coordinator.id);
+      if (!peerIds.length) return json(res, 400, { error: "choose at least one collaborator" });
+      if (peerIds.length > 7) return json(res, 400, { error: "a team run supports up to 7 collaborators" });
+      const participants = [coordinator.id, ...peerIds].map((id) => store.bot(id));
+      if (participants.some((bot) => !bot)) return json(res, 404, { error: "one or more collaborators no longer exist" });
+      const unavailable = participants.find((bot) => bot!.busy);
+      if (unavailable) {
+        return json(res, 409, {
+          error: `${unavailable.name} is already working`,
+        });
+      }
+
+      const id = crypto.randomUUID();
+      const run: CollaborationRun = {
+        id,
+        coordinatorId: coordinator.id,
+        participantIds: participants.map((bot) => bot!.id),
+        prompt: text,
+        pending: new Set(participants.map((bot) => bot!.id)),
+        responses: new Map(),
+      };
+      collaborations.set(id, run);
+      broadcast({ kind: "collaboration", collaborationId: id, coordinatorId: coordinator.id, pending: participants.length, total: participants.length });
+
+      for (const participant of participants) {
+        const isCoordinator = participant!.id === coordinator.id;
+        const prompt = isCoordinator
+          ? `${text}\n\nYou are coordinating a team run. Create your own draft now; after the other bots finish, you will receive their drafts and produce the final synthesis.`
+          : `Team request from ${coordinator.name}:\n\n${text}\n\nCreate an independent, concrete draft for ${coordinator.name} to review. Do not merely agree; flag risks and improve the plan.`;
+        void startTurn(participant!.id, prompt, {
+          collaborationId: id,
+          coordinatorId: coordinator.id,
+          phase: "draft",
+          displayText: text,
+          ...(isCoordinator ? {} : { senderBotId: coordinator.id }),
+        }).catch((error) => {
+          run.responses.set(participant!.id, `Failed to respond: ${(error as Error).message}`);
+          run.pending.delete(participant!.id);
+          if (!run.pending.size) completeCollaborationDraft(participant!.id, participant!.threadId);
+        });
+      }
+      return json(res, 202, { ok: true, collaborationId: id });
+    }
     m = path.match(/^\/api\/bots\/([\w-]+)\/respond$/);
     if (m && method === "POST") {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
       const body = await readBody(req);
-      const instance = registry.get(bot.modelSelection.instanceId);
+      const instance = registry.get(bot.lastRoute?.instanceId ?? bot.modelSelection.instanceId);
       if (!instance) return json(res, 409, { error: "provider unavailable" });
       await instance.adapter.respondToRequest(bot.threadId, String(body.requestId), {
         behavior: body.behavior,
@@ -468,7 +861,8 @@ const server = createServer(async (req, res) => {
     if (m && method === "POST") {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
-      const instance = registry.get(bot.modelSelection.instanceId);
+      const instance = registry.get(bot.lastRoute?.instanceId ?? bot.modelSelection.instanceId);
+      smartRuns.delete(bot.threadId);
       await instance?.adapter.interruptTurn(bot.threadId);
       return json(res, 200, { ok: true });
     }

@@ -32,6 +32,7 @@ const MODELS = {
   options: [
     { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
     { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+    { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
     { id: "gpt-5.4", label: "GPT-5.4" },
   ],
 };
@@ -91,12 +92,19 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // billing to pay-as-you-go (agentcal)
       delete env.OPENAI_API_KEY;
 
-      const child = spawn(config.cli, ["app-server"], {
+      const child = spawn(
+        config.cli,
+        [
+          "app-server",
+          ...(turn.reasoningEffort ? ["-c", `model_reasoning_effort=\"${turn.reasoningEffort}\"`] : []),
+        ],
+        {
         cwd: turn.cwd ?? homedir(),
         env,
         stdio: ["pipe", "pipe", "pipe"],
         detached: true,
-      });
+        },
+      );
 
       const state = { settled: false, lastText: "" };
       const asks = new Map<string, (behavior: string, message?: string) => void>();

@@ -6,6 +6,7 @@ import { ClaudeDriver } from "./claude.ts";
 import { CodexDriver } from "./codex.ts";
 import { GrokDriver } from "./grok.ts";
 import { CustomApiDriver } from "./custom.ts";
+import { ExternalCliDriver } from "./externalCli.ts";
 
 export const BUILT_IN_DRIVERS: readonly AnyProviderDriver[] = [
   GrokDriver,
@@ -13,4 +14,5 @@ export const BUILT_IN_DRIVERS: readonly AnyProviderDriver[] = [
   CodexDriver,
   BoxAgentDriver,
   CustomApiDriver,
+  ExternalCliDriver,
 ];
