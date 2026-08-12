@@ -1,0 +1,61 @@
+appId: com.openmausbot.app
+productName: OpenMausBot
+artifactName: OpenMausBot-${version}-${arch}.${ext}
+
+directories:
+  buildResources: build
+  output: release
+
+files:
+  - electron/**
+  - "!electron/resources/speech-helper"
+  - "!electron/resources/perm-helper"
+  - "!electron/resources/speech-helper.ps1"
+  - "!**/node_modules/**"
+  - package.json
+
+asar: true
+
+extraResources:
+  - from: dist
+    to: ui
+  - from: dist-server
+    to: server
+  - from: electron/resources/speech-helper.ps1
+    to: speech-helper.ps1
+
+mac:
+  target:
+    - target: dmg
+      arch: arm64
+    - target: zip
+      arch: arm64
+  icon: build/icon.icns
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSMicrophoneUsageDescription: OpenMausBot uses the microphone for voice dictation into the composer.
+    NSSpeechRecognitionUsageDescription: OpenMausBot transcribes your voice on-device to type messages for you.
+  notarize: false
+
+dmg:
+  sign: true
+  artifactName: OpenMausBot-${version}.dmg
+
+win:
+  target:
+    - target: nsis
+      arch: x64
+    - target: zip
+      arch: x64
+  icon: build/icon.ico
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  artifactName: OpenMausBot-${version}-${arch}-setup.${ext}
